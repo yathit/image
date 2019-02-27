@@ -52,16 +52,23 @@ class JpegDecoder extends Decoder {
   }
 
   Image decodeImage(List<int> data, {int frame: 0}) {
+    final t1 = Stopwatch();
+    t1.start();
     JpegData jpeg = new JpegData();
     jpeg.read(data);
+    t1.stop();
+    print("@@@@ jpeg.read: ${t1.elapsedMilliseconds}");
 
     if (jpeg.frames.length != 1) {
-      throw new ImageException('only single frame JPEGs supported');
+      throw ImageException('only single frame JPEGs supported');
     }
 
-    Image image = new Image(jpeg.width, jpeg.height, Image.RGB);
-
+    t1.reset();
+    t1.start();
+    Image image = Image(jpeg.width, jpeg.height, Image.RGB);
     _copyToImage(jpeg, image);
+    t1.stop();
+    print("@@@@ jpeg.copyToImage: ${t1.elapsedMilliseconds}");
 
     return image;
   }

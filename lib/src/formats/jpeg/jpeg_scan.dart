@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import '../../image_exception.dart';
 import '../../util/input_buffer.dart';
 import 'jpeg.dart';
@@ -126,7 +127,7 @@ class JpegScan {
     if (bitsData == 0xff) {
       int nextByte = input.readByte();
       if (nextByte != 0) {
-        throw new ImageException('unexpected marker: ' +
+        throw ImageException('unexpected marker: ' +
               ((bitsData << 8) | nextByte).toRadixString(16));
       }
     }
@@ -261,7 +262,7 @@ class JpegScan {
             }
           } else {
             if (s != 1) {
-              throw new ImageException('invalid ACn encoding');
+              throw ImageException('invalid ACn encoding');
             }
             successiveACNextValue = _receiveAndExtend(s);
             successiveACState = r != 0 ? 2 : 3;
@@ -308,16 +309,26 @@ class JpegScan {
     int mcuCol = mcu % mcusPerLine;
     int blockRow = mcuRow * component.v + row;
     int blockCol = mcuCol * component.h + col;
-    if (blockRow >= component.blocks.length ||
-        blockCol >= component.blocks[blockRow].length) {
+
+    if (blockRow >= component.blocksPerColumnForMcu ||
+        blockCol >= component.blocksPerLineForMcu) {
       return;
     }
-    decodeFn(component, component.blocks[blockRow][blockCol]);
+    //decodeFn(component, component.blocks[blockRow][blockCol]);
+
+    const blockSize = 64 * 4;
+    final blockOffset = (blockRow * component.blocksPerLineForMcu * blockSize) + (blockCol * blockSize);
+    final block = Int32List.view(component.blocks.buffer, blockOffset);
+    decodeFn(component, block);
   }
 
   void _decodeBlock(JpegComponent component, decodeFn, int mcu) {
     int blockRow = mcu ~/ component.blocksPerLine;
     int blockCol = mcu % component.blocksPerLine;
-    decodeFn(component, component.blocks[blockRow][blockCol]);
+    //decodeFn(component, component.blocks[blockRow][blockCol]);
+    const blockSize = 64 * 4;
+    final blockOffset = (blockRow * component.blocksPerLineForMcu * blockSize) + (blockCol * blockSize);
+    final block = Int32List.view(component.blocks.buffer, blockOffset);
+    decodeFn(component, block);
   }
 }

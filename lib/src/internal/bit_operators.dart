@@ -5,7 +5,7 @@ int shiftR(int v, int n) {
   // until that issue is fixed (issues 16506, 1533), we'll have to do it
   // the slow way.
   //return (v / SHIFT_BITS[n]).floor();
-  return (v >> n).toSigned(32);
+  return (v >> n);//.toSigned(32);
 }
 
 int shiftL(int v, int n) {
@@ -13,7 +13,7 @@ int shiftL(int v, int n) {
   // until that issue is fixed (issues 16506, 1533), we'll have to do it
   // the slow way.
   //return (v * SHIFT_BITS[n]);
-  return (v << n).toSigned(32);
+  return (v << n);//.toSigned(32);
 }
 
 const List<int> SHIFT_BITS = const [

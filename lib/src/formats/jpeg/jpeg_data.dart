@@ -18,15 +18,15 @@ class JpegData  {
   JpegAdobe adobe;
   JpegFrame frame;
   int resetInterval;
-  ExifData exif = new ExifData();
-  final List<Int16List> quantizationTables = new List(Jpeg.NUM_QUANT_TBLS);
+  ExifData exif = ExifData();
+  final List<Int16List> quantizationTables = List(Jpeg.NUM_QUANT_TBLS);
   final List<JpegFrame> frames = [];
   final List huffmanTablesAC = [];
   final List huffmanTablesDC = [];
-  final List<Map> components = [];
+  final List<_ComponentData> components = [];
 
   bool validate(List<int> bytes) {
-    input = new InputBuffer(bytes, bigEndian: true);
+    input = InputBuffer(bytes, bigEndian: true);
 
     int marker = _nextMarker();
     if (marker != Jpeg.M_SOI) {
@@ -58,20 +58,23 @@ class JpegData  {
   }
 
   JpegInfo readInfo(List<int> bytes) {
-    input = new InputBuffer(bytes, bigEndian: true);
+    input = InputBuffer(bytes, bigEndian: true);
 
     int marker = _nextMarker();
     if (marker != Jpeg.M_SOI) {
       return null;
     }
 
-    JpegInfo info = new JpegInfo();
+    JpegInfo info = JpegInfo();
 
     bool hasSOF = false;
     bool hasSOS = false;
 
+    var t1 = Stopwatch();
     marker = _nextMarker();
     while (marker != Jpeg.M_EOI && !input.isEOS) { // EOI (End of image)
+      t1.reset();
+      t1.start();
       switch (marker) {
         case Jpeg.M_SOF0: // SOF0 (Start of Frame, Baseline DCT)
         case Jpeg.M_SOF1: // SOF1 (Start of Frame, Extended DCT)
@@ -87,7 +90,8 @@ class JpegData  {
           _skipBlock();
           break;
       }
-
+      t1.stop();
+      print("@@@@ JpegData.readInfo MARKER: 0x${marker.toRadixString(16)} ${t1.elapsedMilliseconds}");
       marker = _nextMarker();
     }
 
@@ -102,26 +106,33 @@ class JpegData  {
   }
 
   void read(List<int> bytes) {
-    input = new InputBuffer(bytes, bigEndian: true);
+    input = InputBuffer(bytes, bigEndian: true);
 
+    Stopwatch t1 = Stopwatch();
+    t1.start();
     _read();
+    t1.stop();
+    print("@@@@ JpegData.read _read ${t1.elapsedMilliseconds}");
 
     if (frames.length != 1) {
-      throw new ImageException('Only single frame JPEGs supported');
+      throw ImageException('Only single frame JPEGs supported');
     }
 
-    for (int i = 0; i < frame.componentsOrder.length; ++i) {
-      /*JpegComponent component =*/ frame.components[frame.componentsOrder[i]];
-    }
+    /*for (int i = 0; i < frame.componentsOrder.length; ++i) {
+      frame.components[frame.componentsOrder[i]];
+    }*/
 
+    t1.reset();
+    t1.start();
     for (int i = 0; i < frame.componentsOrder.length; ++i) {
       JpegComponent component = frame.components[frame.componentsOrder[i]];
-      components.add({
-        'scaleX': component.h / frame.maxH,
-        'scaleY': component.v / frame.maxV,
-        'lines': _buildComponentData(frame, component)
-      });
+      final data = _ComponentData(component.h / frame.maxH,
+                                  component.v / frame.maxV,
+                                  _buildComponentData(frame, component));
+      components.add(data);
     }
+    t1.stop();
+    print("@@@@ JpegData.read _components ${t1.elapsedMilliseconds}");
   }
 
   int get width => frame.samplesPerLine;
@@ -131,10 +142,10 @@ class JpegData  {
   Uint8List getData(int width, int height) {
     num scaleX = 1;
     num scaleY = 1;
-    Map component1;
-    Map component2;
-    Map component3;
-    Map component4;
+    _ComponentData component1;
+    _ComponentData component2;
+    _ComponentData component3;
+    _ComponentData component4;
     Uint8List component1Line;
     Uint8List component2Line;
     Uint8List component3Line;
@@ -143,14 +154,14 @@ class JpegData  {
     int Y, Cb, Cr, K, C, M, Ye, R, G, B;
     bool colorTransform = false;
     int dataLength = width * height * components.length;
-    Uint8List data = new Uint8List(dataLength);
+    Uint8List data = Uint8List(dataLength);
 
     switch (components.length) {
       case 1:
         component1 = components[0];
-        var lines = component1['lines'];
-        var sy = component1['scaleY'];
-        var sx =  component1['scaleX'];
+        var lines = component1.data;
+        var sy = component1.scaleY;
+        var sx =  component1.scaleX;
         for (int y = 0; y < height; y++) {
           component1Line = lines[(y * sy * scaleY).toInt()];
           for (int x = 0; x < width; x++) {
@@ -164,12 +175,12 @@ class JpegData  {
         component1 = components[0];
         component2 = components[1];
         for (int y = 0; y < height; y++) {
-          component1Line = component1['lines'][(y * component1['scaleY'] * scaleY)];
-          component2Line = component2['lines'][(y * component2['scaleY'] * scaleY)];
+          component1Line = component1.data[(y * component1.scaleY * scaleY).toInt()];
+          component2Line = component2.data[(y * component2.scaleY * scaleY).toInt()];
           for (int x = 0; x < width; x++) {
-            Y = component1Line[(x * component1['scaleX'] * scaleX).toInt()];
+            Y = component1Line[(x * component1.scaleX * scaleX).toInt()];
             data[offset++] = Y;
-            Y = component2Line[(x * component2['scaleX'] * scaleX).toInt()];
+            Y = component2Line[(x * component2.scaleX * scaleX).toInt()];
             data[offset++] = Y;
           }
         }
@@ -182,16 +193,16 @@ class JpegData  {
         component2 = components[1];
         component3 = components[2];
 
-        double sy1 = (component1['scaleY'] * scaleY).toDouble();
-        double sy2 = (component2['scaleY'] * scaleY).toDouble();
-        double sy3 = (component3['scaleY'] * scaleY).toDouble();
-        double sx1 = (component1['scaleX'] * scaleX).toDouble();
-        double sx2 = (component2['scaleX'] * scaleX).toDouble();
-        double sx3 = (component3['scaleX'] * scaleX).toDouble();
+        double sy1 = (component1.scaleY * scaleY).toDouble();
+        double sy2 = (component2.scaleY * scaleY).toDouble();
+        double sy3 = (component3.scaleY * scaleY).toDouble();
+        double sx1 = (component1.scaleX * scaleX).toDouble();
+        double sx2 = (component2.scaleX * scaleX).toDouble();
+        double sx3 = (component3.scaleX * scaleX).toDouble();
 
-        List<Uint8List> lines1 = component1['lines'];
-        List<Uint8List> lines2 = component2['lines'];
-        List<Uint8List> lines3 = component3['lines'];
+        List<Uint8List> lines1 = component1.data;
+        List<Uint8List> lines2 = component2.data;
+        List<Uint8List> lines3 = component3.data;
 
         for (int y = 0; y < height; y++) {
           component1Line = lines1[(y * sy1).toInt()];
@@ -221,7 +232,7 @@ class JpegData  {
         break;
       case 4:
         if (adobe == null) {
-          throw new ImageException('Unsupported color mode (4 components)');
+          throw ImageException('Unsupported color mode (4 components)');
         }
         // The default transform for four components is false
         colorTransform = false;
@@ -235,19 +246,19 @@ class JpegData  {
         component3 = components[2];
         component4 = components[3];
 
-        var sx1 = component1['scaleX'] * scaleX;
-        var sx2 = component2['scaleX'] * scaleX;
-        var sx3 = component3['scaleX'] * scaleX;
-        var sx4 = component4['scaleX'] * scaleX;
-        var sy1 = component1['scaleY'] * scaleY;
-        var sy2 = component2['scaleY'] * scaleY;
-        var sy3 = component3['scaleY'] * scaleY;
-        var sy4 = component4['scaleY'] * scaleY;
+        var sx1 = component1.scaleX * scaleX;
+        var sx2 = component2.scaleX * scaleX;
+        var sx3 = component3.scaleX * scaleX;
+        var sx4 = component4.scaleX * scaleX;
+        var sy1 = component1.scaleY * scaleY;
+        var sy2 = component2.scaleY * scaleY;
+        var sy3 = component3.scaleY * scaleY;
+        var sy4 = component4.scaleY * scaleY;
 
-        var lines1 = component1['lines'];
-        var lines2 = component2['lines'];
-        var lines3 = component3['lines'];
-        var lines4 = component4['lines'];
+        var lines1 = component1.data;
+        var lines2 = component2.data;
+        var lines3 = component3.data;
+        var lines4 = component4.data;
 
         for (int y = 0; y < height; y++) {
           component1Line = lines1[(y * sy1).toInt()];
@@ -280,7 +291,7 @@ class JpegData  {
         }
         break;
       default:
-        throw new ImageException('Unsupported color mode');
+        throw ImageException('Unsupported color mode');
     }
 
     return data;
@@ -289,11 +300,14 @@ class JpegData  {
   void _read() {
     int marker = _nextMarker();
     if (marker != Jpeg.M_SOI) { // SOI (Start of Image)
-      throw new ImageException('Start Of Image marker not found.');
+      throw ImageException('Start Of Image marker not found.');
     }
 
+    var t1 = Stopwatch();
     marker = _nextMarker();
     while (marker != Jpeg.M_EOI && !input.isEOS) {
+      t1.reset();
+      t1.start();
       InputBuffer block = _readBlock();
       switch (marker) {
         case Jpeg.M_APP0:
@@ -337,7 +351,7 @@ class JpegData  {
         case Jpeg.M_SOF13:
         case Jpeg.M_SOF14:
         case Jpeg.M_SOF15:
-          throw new ImageException('Unhandled frame type ${marker.toRadixString(16)}');
+          throw ImageException('Unhandled frame type ${marker.toRadixString(16)}');
 
         case Jpeg.M_DHT: // DHT (Define Huffman Tables)
           _readDHT(block);
@@ -366,11 +380,13 @@ class JpegData  {
           }
 
           if (marker != 0) {
-            throw new ImageException('Unknown JPEG marker ' +
+            throw ImageException('Unknown JPEG marker ' +
                 marker.toRadixString(16));
           }
           break;
       }
+      t1.stop();
+      print("@@@@ JpegData._read MARKER: 0x${marker.toRadixString(16)} ${t1.elapsedMilliseconds}");
 
       marker = _nextMarker();
     }
@@ -379,7 +395,7 @@ class JpegData  {
   void _skipBlock() {
     int length = input.readUint16();
     if (length < 2) {
-      throw new ImageException('Invalid Block');
+      throw ImageException('Invalid Block');
     }
     input.offset += length - 2;
   }
@@ -387,7 +403,7 @@ class JpegData  {
   InputBuffer _readBlock() {
     int length = input.readUint16();
     if (length < 2) {
-      throw new ImageException('Invalid Block');
+      throw ImageException('Invalid Block');
     }
     return input.readBytes(length - 2);
   }
@@ -518,10 +534,10 @@ class JpegData  {
 
   void _readExifData(InputBuffer block) {
     if (exif.rawData == null) {
-      exif.rawData = new List<Uint8List>();
+      exif.rawData = List<Uint8List>();
     }
 
-    Uint8List rawData = new Uint8List.fromList(block.toUint8List());
+    Uint8List rawData = Uint8List.fromList(block.toUint8List());
     exif.rawData.add(rawData);
 
     const EXIF_TAG = 0x45786966; // Exif\0\0
@@ -571,7 +587,7 @@ class JpegData  {
       // 'JFIF\0'
       if (appData[0] == 0x4A && appData[1] == 0x46 &&
           appData[2] == 0x49 && appData[3] == 0x46 && appData[4] == 0) {
-        jfif = new JpegJfif();
+        jfif = JpegJfif();
         jfif.majorVersion = appData[5];
         jfif.minorVersion = appData[6];
         jfif.densityUnits = appData[7];
@@ -590,7 +606,7 @@ class JpegData  {
       if (appData[0] == 0x41 && appData[1] == 0x64 &&
           appData[2] == 0x6F && appData[3] == 0x62 &&
           appData[4] == 0x65 && appData[5] == 0) {
-        adobe = new JpegAdobe();
+        adobe = JpegAdobe();
         adobe.version = appData[6];
         adobe.flags0 = shiftL(appData[7], 8) | appData[8];
         adobe.flags1 = shiftL(appData[9], 8) | appData[10];
@@ -608,11 +624,11 @@ class JpegData  {
       n &= 0x0F;
 
       if (n >= Jpeg.NUM_QUANT_TBLS) {
-        throw new ImageException('Invalid number of quantization tables');
+        throw ImageException('Invalid number of quantization tables');
       }
 
       if (quantizationTables[n] == null) {
-        quantizationTables[n] = new Int16List(64);
+        quantizationTables[n] = Int16List(64);
       }
 
       Int16List tableData = quantizationTables[n];
@@ -629,16 +645,18 @@ class JpegData  {
     }
 
     if (!block.isEOS) {
-      throw new ImageException('Bad length for DQT block');
+      throw ImageException('Bad length for DQT block');
     }
   }
 
   void _readFrame(int marker, InputBuffer block) {
     if (frame != null) {
-      throw new ImageException('Duplicate JPG frame data found.');
+      throw ImageException('Duplicate JPG frame data found.');
     }
 
-    frame = new JpegFrame();
+    final t1 = Stopwatch();
+    t1.start();
+    frame = JpegFrame();
     frame.extended = (marker == Jpeg.M_SOF1);
     frame.progressive = (marker == Jpeg.M_SOF2);
     frame.precision = block.readByte();
@@ -646,8 +664,12 @@ class JpegData  {
     frame.samplesPerLine = block.readUint16();
 
     int numComponents = block.readByte();
+    t1.stop();
+    print("@@@@ _readFrame [1] ${t1.elapsedMilliseconds}");
 
     for (int i = 0; i < numComponents; i++) {
+      t1.reset();
+      t1.start();
       int componentId = block.readByte();
       int x = block.readByte();
       int h = shiftR(x, 4) & 15;
@@ -655,10 +677,16 @@ class JpegData  {
       int qId = block.readByte();
       frame.componentsOrder.add(componentId);
       frame.components[componentId] =
-          new JpegComponent(h, v, quantizationTables, qId);
+          JpegComponent(h, v, quantizationTables, qId);
+      t1.stop();
+      print("@@@@ _readFrame [2] $i ${t1.elapsedMilliseconds}");
     }
 
+    t1.reset();
+    t1.start();
     frame.prepare();
+    t1.stop();
+    print("@@@@ _readFrame [3] ${t1.elapsedMilliseconds}");
     frames.add(frame);
   }
 
@@ -666,14 +694,14 @@ class JpegData  {
     while (!block.isEOS) {
       int index = block.readByte();
 
-      Uint8List bits = new Uint8List(16);
+      Uint8List bits = Uint8List(16);
       int count = 0;
       for (int j = 0; j < 16; j++) {
         bits[j] = block.readByte();
         count += bits[j];
       }
 
-      Uint8List huffmanValues = new Uint8List(count);
+      Uint8List huffmanValues = Uint8List(count);
       for (int j = 0; j < count; j++) {
         huffmanValues[j] = block.readByte();
       }
@@ -701,16 +729,16 @@ class JpegData  {
   void _readSOS(InputBuffer block) {
     int n = block.readByte();
     if (n < 1 || n > Jpeg.MAX_COMPS_IN_SCAN) {
-      throw new ImageException('Invalid SOS block');
+      throw ImageException('Invalid SOS block');
     }
 
-    List components = new List(n);
+    List components = List(n);
     for (int i = 0; i < n; i++) {
       int id = block.readByte();
       int c = block.readByte();
 
       if (!frame.components.containsKey(id)) {
-        throw new ImageException('Invalid Component in SOS block');
+        throw ImageException('Invalid Component in SOS block');
       }
 
       JpegComponent component = frame.components[id];
@@ -734,8 +762,8 @@ class JpegData  {
     int Ah = shiftR(successiveApproximation, 4) & 15;
     int Al = successiveApproximation & 15;
 
-    new JpegScan(input, frame, components, resetInterval,
-                  spectralStart, spectralEnd, Ah, Al).decode();
+    JpegScan(input, frame, components, resetInterval,
+             spectralStart, spectralEnd, Ah, Al).decode();
   }
 
   List _buildHuffmanTable(Uint8List codeLengths, Uint8List values) {
@@ -747,7 +775,7 @@ class JpegData  {
       length--;
     }
 
-    code.add(new _JpegHuffman());
+    code.add(_JpegHuffman());
 
     _JpegHuffman p = code[0];
     _JpegHuffman q;
@@ -765,7 +793,7 @@ class JpegData  {
         p.index++;
         code.add(p);
         while (code.length <= i) {
-          q = new _JpegHuffman();
+          q = _JpegHuffman();
           code.add(q);
           if (p.children.length <= p.index) {
             p.children.length = p.index + 1;
@@ -778,7 +806,7 @@ class JpegData  {
 
       if ((i + 1) < length) {
         // p here points to last code
-        q = new _JpegHuffman();
+        q = _JpegHuffman();
         code.add(q);
         if (p.children.length <= p.index) {
           p.children.length = p.index + 1;
@@ -795,25 +823,30 @@ class JpegData  {
                                       JpegComponent component) {
     final int blocksPerLine = component.blocksPerLine;
     final int blocksPerColumn = component.blocksPerColumn;
-    int samplesPerLine = shiftL(blocksPerLine, 3);
-    Int32List R = new Int32List(64);
-    Uint8List r = new Uint8List(64);
-    List<Uint8List> lines = new List(blocksPerColumn * 8);
+    int samplesPerLine = blocksPerLine << 3;//shiftL(blocksPerLine, 3);
+    Int32List R = Int32List(64);
+    Uint8List r = Uint8List(64);
+    List<Uint8List> lines = List(blocksPerColumn * 8);
 
     int l = 0;
+    int blockOffset = 0;
+    const blockSize = 64 * 4;
     for (int blockRow = 0; blockRow < blocksPerColumn; blockRow++) {
-      int scanLine = shiftL(blockRow, 3);
+      int scanLine = blockRow << 3;//shiftL(blockRow, 3);
       for (int i = 0; i < 8; i++) {
-        lines[l++] = new Uint8List(samplesPerLine);
+        lines[l++] = Uint8List(samplesPerLine);
       }
 
       for (int blockCol = 0; blockCol < blocksPerLine; blockCol++) {
+        final blockData = Int32List.view(component.blocks.buffer, blockOffset);
+        blockOffset += blockSize;
         _quantizeAndInverse(component.quantizationTable,
-                            component.blocks[blockRow][blockCol],
+                            blockData,
+                            //component.blocks[blockRow][blockCol],
                             r, R);
 
         int offset = 0;
-        int sample = shiftL(blockCol, 3);
+        int sample = blockCol << 3;//shiftL(blockCol, 3);
         for (int j = 0; j < 8; j++) {
           Uint8List line = lines[scanLine + j];
           for (int i = 0; i < 8; i++) {
@@ -854,7 +887,7 @@ class JpegData  {
     const int dctClipOffset = 256;
     const int dctClipLength = 768;
     if (dctClip == null) {
-      dctClip = new Uint8List(dctClipLength);
+      dctClip = Uint8List(dctClipLength);
       int i;
       for (i = -256; i < 0; ++i) {
         dctClip[dctClipOffset + i] = 0;
@@ -887,13 +920,14 @@ class JpegData  {
     for (int i = 0; i < 8; ++i, row += 8) {
       // check for all-zero AC coefficients
       if (p[1 + row] == 0 &&
-      p[2 + row] == 0 &&
-      p[3 + row] == 0 &&
-      p[4 + row] == 0 &&
-      p[5 + row] == 0 &&
-      p[6 + row] == 0 &&
-      p[7 + row] == 0) {
-        int t = shiftR((SQRT_2 * p[0 + row] + 512), 10);
+          p[2 + row] == 0 &&
+          p[3 + row] == 0 &&
+          p[4 + row] == 0 &&
+          p[5 + row] == 0 &&
+          p[6 + row] == 0 &&
+          p[7 + row] == 0) {
+        //int t = shiftR((SQRT_2 * p[0 + row] + 512), 10);
+        int t = (SQRT_2 * p[0 + row] + 512) >> 10;
         p[row + 0] = t;
         p[row + 1] = t;
         p[row + 2] = t;
@@ -906,14 +940,14 @@ class JpegData  {
       }
 
       // stage 4
-      int v0 = shiftR((SQRT_2 * p[0 + row] + 128), 8);
-      int v1 = shiftR((SQRT_2 * p[4 + row] + 128), 8);
+      int v0 = (SQRT_2 * p[0 + row] + 128) >> 8;//shiftR((SQRT_2 * p[0 + row] + 128), 8);
+      int v1 = (SQRT_2 * p[4 + row] + 128) >> 8;//shiftR((SQRT_2 * p[4 + row] + 128), 8);
       int v2 = p[2 + row];
       int v3 = p[6 + row];
-      int v4 = shiftR((SQRT_1D2 * (p[1 + row] - p[7 + row]) + 128), 8);
-      int v7 = shiftR((SQRT_1D2 * (p[1 + row] + p[7 + row]) + 128), 8);
-      int v5 = shiftL(p[3 + row], 4);
-      int v6 = shiftL(p[5 + row], 4);
+      int v4 = (SQRT_1D2 * (p[1 + row] - p[7 + row]) + 128) >> 8;//shiftR((SQRT_1D2 * (p[1 + row] - p[7 + row]) + 128), 8);
+      int v7 = (SQRT_1D2 * (p[1 + row] + p[7 + row]) + 128) >> 8;//shiftR((SQRT_1D2 * (p[1 + row] + p[7 + row]) + 128), 8);
+      int v5 = p[3 + row] << 4;//shiftL(p[3 + row], 4);
+      int v6 = p[5 + row] << 4;//shiftL(p[5 + row], 4);
 
       // stage 3
       int t = shiftR((v0 - v1 + 1), 1);
@@ -1145,8 +1179,16 @@ class _JpegHuffman {
 
 /*class _JPEG_HuffTables {
   bool ac_table = false;
-  Uint32List look_up = new Uint32List(256);
-  Uint32List look_up2 = new Uint32List(256);
-  Uint8List code_size = new Uint8List(256);
-  Uint32List tree = new Uint32List(512);
+  Uint32List look_up = Uint32List(256);
+  Uint32List look_up2 = Uint32List(256);
+  Uint8List code_size = Uint8List(256);
+  Uint32List tree = Uint32List(512);
 }*/
+
+class _ComponentData {
+  double scaleX;
+  double scaleY;
+  List<Uint8List> data;
+
+  _ComponentData(this.scaleX, this.scaleY, this.data);
+}

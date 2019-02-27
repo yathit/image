@@ -7,7 +7,10 @@ class JpegComponent {
   int quantizationIndex;
   int blocksPerLine;
   int blocksPerColumn;
-  List blocks;
+  int blocksPerColumnForMcu;
+  int blocksPerLineForMcu;
+  Int32List blocks;
+  //List blocks;
   List huffmanTableDC;
   List huffmanTableAC;
   int pred;
